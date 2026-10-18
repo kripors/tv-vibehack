@@ -1,5 +1,15 @@
 # Alterações
 
+## TV Home Lite Glass — 2026-10-18
+
+- Comparado com `upstream/main` (Gathin23/tv-vibehack); restaurados GlassView, DockDecoration, Outfit e os recursos originais de cartões e menus.
+- Recuperados dock inferior, grade de cartões 180 × 101 dp, título do favorito, brilho ambiente, painéis translúcidos e gradientes.
+- Restauradas transições de escala e destaque de vidro somente ao mudar foco; sem loops ou dependência de molas. Rolagem alinha o vidro sem iniciar novas animações.
+- Preservados cache LRU compartilhado de 2 MiB, uma thread de carregamento sob demanda, cancelamento na reciclagem e imagens até 96 × 96 pixels. Banners originais são rasterizados em 96 × 54 e usam o mesmo cache, sem Drawables retidos na lista.
+- Preservadas atualização por eventos de pacotes, ausência de recarga incondicional no onResume, prefetch desativado, pool reduzido, R8 e redução de recursos.
+- Mantidos HDMI, botão de TV aberta e configurações, Android 11 (minSdk 26/targetSdk 29) e workflow GitHub Actions sem alterações. ClockDream não foi restaurado.
+- Verificação estática de XML e referências locais; compilação/lint bloqueados por ausência de Java executável e SDK Android no ambiente. Nenhum comando ADB, instalação ou acesso à TV.
+
 ## TV Home Lite — 2026-10-18
 
 - Reaproveitados MainActivity.java e AppAdapter.java com Java/XML e RecyclerView/GridLayoutManager.

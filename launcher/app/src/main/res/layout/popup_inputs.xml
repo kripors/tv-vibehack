@@ -4,9 +4,9 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@drawable/popup_panel"
+    android:background="@drawable/glass_panel"
     android:padding="6dp"
-    android:elevation="0dp">
+    android:elevation="12dp">
 
     <LinearLayout
         android:id="@+id/rows"

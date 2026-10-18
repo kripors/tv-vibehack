@@ -1,4 +1,4 @@
-# TV Home Lite
+# TV Home Lite Glass
 
 Launcher nativo Java/XML para Android TV (Android 8 ou superior), voltado a aparelhos com pouca RAM. Esta árvore contém a versão leve; não há flavor separado. MainActivity e AppAdapter foram reaproveitados.
 
@@ -34,9 +34,9 @@ O workflow prepara as ferramentas apenas no runner do GitHub. Não chama os scri
 
 ## Comportamento e configuração
 
-- Fundo preto, foco com borda estática e fonte do sistema; sem animações, banners por aplicativo ou efeitos de vidro.
+- Visual original com Outfit, dock inferior, painéis translúcidos, gradientes, banners e GlassView. Transições breves ao mudar foco, sem animações contínuas e sem ClockDream.
 - RecyclerView/GridLayoutManager com quatro colunas e pool reduzido. Setas navegam, OK abre e Voltar permanece na Home. Entradas e Configurações ficam no topo.
-- Ícones carregados em uma única thread, só quando vinculados a uma célula, rasterizados em até 96 × 96 pixels. Cache LRU de 2 MiB, além dos ícones dos holders visíveis e temporários do carregamento. O carregamento original do PackageManager pode alocar uma imagem maior temporariamente. O cache é liberado em avisos de memória e no encerramento da Activity.
+- Ícones e banners carregados em uma única thread, só quando vinculados a uma célula, rasterizados em até 96 × 96 pixels. Banners rasterizados em 96 × 54 pixels. Cache LRU compartilhado de 2 MiB, além dos ícones dos holders visíveis e temporários do carregamento. O carregamento original do PackageManager pode alocar uma imagem maior temporariamente. O cache é liberado em avisos de memória e no encerramento da Activity.
 - Lista consultada ao criar a Activity e quando chegam eventos de adição, remoção ou alteração de pacotes. Retornar de outro app não reconstrói a lista. A Activity recriada pelo sistema precisa consultar novamente. O receiver existe somente durante a Activity; não há serviço.
 - `app/src/main/res/values/config.xml`: ordem de favoritos, pacotes ocultos, colunas e pacote da TV aberta. Favoritos ausentes são ignorados.
 - TV aberta tenta o pacote configurado (Leanback ou launcher comum), a URI pública de canais e a ação de seleção de entrada do fabricante. O botão é sempre exibido; a disponibilidade depende do firmware. HDMI usa TvInputManager e as URIs públicas de passagem, sem privilégios de sistema.

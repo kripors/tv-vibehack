@@ -3,6 +3,8 @@ package com.gathin.tvhome;
 import android.app.Activity;
 import android.content.*;
 import android.graphics.Color;
+import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.media.tv.*;
 import android.os.Bundle;
@@ -13,13 +15,20 @@ import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import java.util.*;
 
-/** Lightweight TV home. No services, network queries or animated effects. */
+/** Glass home with bounded focus transitions and lazy, memory-limited artwork. */
 public class MainActivity extends Activity implements AppAdapter.TileListener {
     static int COLUMNS = 4;
     private AppAdapter adapter;
     private RecyclerView grid;
     private ViewGroup root;
     private float density;
+    private GlassView glass;
+    private View ambient;
+    private TextView heroName;
+    private GradientDrawable ambientGlow;
+    private boolean glassShown;
+    private boolean heroShown;
+    private int ambientColor;
     private String liveTvPkg;
     private static String lastFocusedKey;
     private static int lastFocused;
@@ -54,6 +63,16 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         density = getResources().getDisplayMetrics().density;
         COLUMNS = Math.max(1, getResources().getInteger(R.integer.columns));
         liveTvPkg = getString(R.string.live_tv_package).trim();
+        glass = findViewById(R.id.glass);
+        ambient = findViewById(R.id.ambient);
+        heroName = findViewById(R.id.heroName);
+        ambientGlow = new GradientDrawable();
+        ambientGlow.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        ambientGlow.setGradientCenter(0.32f, 0.42f);
+        ambient.setBackground(ambientGlow);
+        ambient.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (r > l) ambientGlow.setGradientRadius((r - l) * 0.62f);
+        });
         grid = findViewById(R.id.grid);
         GridLayoutManager layout = new GridLayoutManager(this, COLUMNS);
         layout.setItemPrefetchEnabled(false);
@@ -64,6 +83,29 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.getRecycledViewPool().setMaxRecycledViews(0, COLUMNS);
         adapter = new AppAdapter(this, this, COLUMNS);
         grid.setAdapter(adapter);
+        grid.addItemDecoration(new DockDecoration(COLUMNS, density));
+        grid.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            int want = Math.max(0, b - t - (int) (193 * density));
+            if (grid.getPaddingTop() != want)
+                grid.setPadding(grid.getPaddingLeft(), want, grid.getPaddingRight(), grid.getPaddingBottom());
+            updateFocusedGlass();
+        });
+        grid.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override public void onScrolled(RecyclerView rv, int dx, int dy) {
+                updateFocusedGlass();
+            }
+        });
+        getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
+            if (newF == null || newF.getId() != R.id.card) { hideGlass(); hideHero(); }
+        });
+        int[] buttons = {R.id.btnInputs, R.id.btnLiveTv, R.id.btnSettings};
+        for (int id : buttons) findViewById(id).setOnKeyListener((v, code, event) -> {
+            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+            if (code == KeyEvent.KEYCODE_DPAD_DOWN) { focusTile(lastFocused); return true; }
+            return code == KeyEvent.KEYCODE_DPAD_UP
+                    || (code == KeyEvent.KEYCODE_DPAD_LEFT && v.getId() == R.id.btnInputs)
+                    || (code == KeyEvent.KEYCODE_DPAD_RIGHT && v.getId() == R.id.btnSettings);
+        });
         findViewById(R.id.btnInputs).setOnClickListener(v -> showInputs());
         findViewById(R.id.btnLiveTv).setOnClickListener(v -> openLiveTv());
         findViewById(R.id.btnSettings).setOnClickListener(v -> open(new Intent(Settings.ACTION_SETTINGS)));
@@ -78,9 +120,27 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         super.onResume();
         resumed = true;
         refresh.run();
+        int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
+        ((TextView) findViewById(R.id.greeting)).setText(hour < 5 || hour >= 22 ? R.string.good_night
+                : hour < 12 ? R.string.good_morning : hour < 17 ? R.string.good_afternoon : R.string.good_evening);
+        grid.post(() -> {
+            View focused = grid.getFocusedChild();
+            if (focused != null) {
+                int pos = grid.getChildAdapterPosition(focused);
+                if (pos != RecyclerView.NO_POSITION) onTileFocused(pos, focused.findViewById(R.id.card));
+            }
+        });
     }
     @Override protected void onPause() {
         resumed = false;
+        glass.animate().cancel();
+        heroName.animate().cancel();
+        ambient.animate().cancel();
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            View item = grid.getChildAt(i);
+            item.findViewById(R.id.card).animate().cancel();
+            item.findViewById(R.id.name).animate().cancel();
+        }
         grid.removeCallbacks(refresh);
         super.onPause();
     }
@@ -96,10 +156,116 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (adapter != null) adapter.clearIcons();
     }
     @Override public void onBackPressed() { }
-    @Override public void onTileFocused(int position, View card) {
+    private void updateFocusedGlass() {
+        View focused = grid.getFocusedChild();
+        if (focused == null || !glassShown) return;
+        View card = focused.findViewById(R.id.card);
+        Rect rect = new Rect(0, 0, card.getWidth(), card.getHeight());
+        root.offsetDescendantRectToMyCoords(card, rect);
+        // Align during scroll without starting another scroll or focus transition.
+        glass.animate().cancel();
+        glass.setTranslationX(rect.exactCenterX() - glass.getLayoutParams().width / 2f);
+        glass.setTranslationY(rect.exactCenterY() - glass.getLayoutParams().height / 2f);
+        glass.setAlpha(1f);
+    }
+    @Override
+    public void onTileFocused(int position, View card) {
         lastFocused = position;
         lastFocusedKey = adapter.keyAt(position);
+        // Tile rect in root coordinates, using layout positions (ignores the scale animation).
+        Rect r = new Rect(0, 0, card.getWidth(), card.getHeight());
+        root.offsetDescendantRectToMyCoords(card, r);
+        float pad = 6f * density;        // matches GlassView's glow inset
+        float w = card.getWidth() * AppAdapter.FOCUS_SCALE + 2 * pad;
+        float h = card.getHeight() * AppAdapter.FOCUS_SCALE + 2 * pad;
+        float x = r.exactCenterX() - w / 2f;
+        float y = r.exactCenterY() - h / 2f;
+
+        ViewGroup.LayoutParams lp = glass.getLayoutParams();
+        if (lp.width != (int) w || lp.height != (int) h) {
+            lp.width = (int) w;
+            lp.height = (int) h;
+            glass.setLayoutParams(lp);
+            glass.setRadius(16f * density * AppAdapter.FOCUS_SCALE + pad);
+        }
+        if (!glassShown) {
+            glass.animate().cancel();
+            glass.setTranslationX(x);
+            glass.setTranslationY(y);
+            glass.animate().alpha(1f).setDuration(180).start();
+            glassShown = true;
+        } else {
+            glass.animate().translationX(x).translationY(y).alpha(1f).setDuration(220).start();
+        }
+        View item = (View) card.getParent();
+        if (position < COLUMNS) {
+            // Dock: park it at the bottom of the screen and show the top shelf for this app.
+            int decoratedTop = item.getTop() - (int) (6 * density);
+            int dy = decoratedTop - grid.getPaddingTop();
+            if (Math.abs(dy) > 1) grid.smoothScrollBy(0, dy);
+            showHero(position, r.top - dy);
+        } else {
+            hideHero();
+            // Scroll just enough so the whole glass (not only the tile) is visible.
+            Rect want = new Rect(0, -(int) pad * 2, item.getWidth(), item.getHeight() + (int) pad);
+            grid.requestChildRectangleOnScreen(item, want, false);
+        }
     }
+
+    // ---- top shelf -------------------------------------------------------------------------------
+
+    private void showHero(int position, float dockTopInRoot) {
+        String label = adapter.labelAt(position);
+        int color = adapter.ambientColorAt(position);
+        float y = dockTopInRoot - 14 * density - 26 * density - heroName.getHeight();
+        boolean changed = !label.contentEquals(heroName.getText());
+
+        if (!heroShown) {
+            heroName.setText(label);
+            heroName.setY(y);
+            heroName.setTranslationX(0f);
+            heroName.animate().alpha(1f).setDuration(260).start();
+            setAmbient(color);
+            ambient.animate().alpha(1f).setDuration(600).start();
+            heroShown = true;
+        } else if (changed) {
+            heroName.animate().alpha(0f).translationX(-12 * density).setDuration(120).withEndAction(() -> {
+                heroName.setText(label);
+                heroName.setY(y);
+                heroName.setTranslationX(12 * density);
+                heroName.animate().alpha(1f).translationX(0f).setDuration(200).start();
+            }).start();
+            if (color != ambientColor) {
+                ambient.animate().alpha(0.35f).setDuration(200).withEndAction(() -> {
+                    setAmbient(color);
+                    ambient.animate().alpha(1f).setDuration(500).start();
+                }).start();
+            }
+        } else {
+            heroName.setY(y);
+            if (color != ambientColor) setAmbient(color);
+        }
+    }
+
+    private void setAmbient(int color) {
+        ambientColor = color;
+        int c = color & 0x00FFFFFF;
+        ambientGlow.setColors(new int[]{0x5C000000 | c, 0x26000000 | c, 0x00000000 | c});
+    }
+
+    private void hideHero() {
+        if (!heroShown) return;
+        heroShown = false;
+        heroName.animate().alpha(0f).setDuration(160).start();
+        ambient.animate().alpha(0f).setDuration(300).start();
+    }
+
+    private void hideGlass() {
+        if (!glassShown) return;
+        glassShown = false;
+        glass.animate().alpha(0f).setDuration(160).start();
+    }
+
     @Override public boolean onTileVerticalKey(int position, int key) {
         int count = adapter.getItemCount();
         if (key == KeyEvent.KEYCODE_DPAD_UP && position < COLUMNS) {
@@ -117,7 +283,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.scrollToPosition(pos);
         grid.post(() -> {
             RecyclerView.ViewHolder holder = grid.findViewHolderForAdapterPosition(pos);
-            if (holder != null) holder.itemView.findViewById(R.id.card).requestFocus();
+            if (holder != null) {
+                View card = holder.itemView.findViewById(R.id.card);
+                if (card.isFocused()) onTileFocused(pos, card);
+                else card.requestFocus();
+            }
         });
     }
     private boolean tryOpen(Intent intent) {

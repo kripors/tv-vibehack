@@ -26,6 +26,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         Entry(String label, ComponentName component) { this.label = label; this.component = component; }
         String key() { return component.flattenToString(); }
     }
+    static final float FOCUS_SCALE = 1.10f;
     private final Context context;
     private final TileListener listener;
     private final List<Entry> items = new ArrayList<>();
@@ -79,28 +80,53 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         cancel(holder);
         Entry entry = items.get(position);
         holder.key = entry.key();
+        holder.card.animate().cancel();
+        holder.name.animate().cancel();
+        boolean focused = holder.card.isFocused();
+        holder.card.setScaleX(focused ? FOCUS_SCALE : 1f);
+        holder.card.setScaleY(focused ? FOCUS_SCALE : 1f);
+        holder.name.setVisibility(position < MainActivity.COLUMNS ? View.INVISIBLE : View.VISIBLE);
+        holder.name.setAlpha(focused ? 1f : 0f);
+        holder.name.setTranslationY((focused ? 4 : -6) * context.getResources().getDisplayMetrics().density);
         holder.name.setText(entry.label);
+        holder.label.setText(entry.label);
+        holder.banner.setImageDrawable(null);
+        holder.banner.setVisibility(View.GONE);
+        holder.icon.setVisibility(View.VISIBLE);
+        holder.label.setVisibility(View.VISIBLE);
         holder.card.setContentDescription(entry.label);
         holder.icon.setImageResource(R.mipmap.ic_launcher);
         Bitmap cached = icons.get(holder.key);
-        if (cached != null) holder.icon.setImageBitmap(cached);
+        if (cached != null) showArtwork(holder, cached);
         else {
             final int requestGeneration = generation;
             final String key = holder.key;
             holder.task = worker.submit(() -> {
                 Bitmap bitmap;
                 try {
-                    Drawable drawable = context.getPackageManager().getActivityIcon(entry.component);
+                    PackageManager pm = context.getPackageManager();
+                    ActivityInfo info = pm.getActivityInfo(entry.component, 0);
+                    Drawable drawable = info.loadBanner(pm);
+                    if (drawable == null) drawable = info.applicationInfo.loadBanner(pm);
+                    boolean banner = drawable != null;
+                    if (drawable == null) drawable = pm.getActivityIcon(entry.component);
                     if (Thread.currentThread().isInterrupted()) return;
-                    bitmap = Bitmap.createBitmap(iconSize, iconSize, Bitmap.Config.ARGB_8888);
-                    drawable.setBounds(0, 0, iconSize, iconSize);
+                    int width = banner ? 96 : iconSize;
+                    int height = banner ? 54 : iconSize;
+                    bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                    drawable.setBounds(0, 0, width, height);
                     drawable.draw(new Canvas(bitmap));
                 } catch (PackageManager.NameNotFoundException | RuntimeException ex) { return; }
                 if (Thread.currentThread().isInterrupted() || closed) return;
                 main.post(() -> {
                     if (closed || generation != requestGeneration) return;
                     icons.put(key, bitmap);
-                    if (key.equals(holder.key)) holder.icon.setImageBitmap(bitmap);
+                    if (key.equals(holder.key)) {
+                        showArtwork(holder, bitmap);
+                        int pos = holder.getBindingAdapterPosition();
+                        if (holder.card.isFocused() && pos != RecyclerView.NO_POSITION)
+                            listener.onTileFocused(pos, holder.card);
+                    }
                 });
             });
         }
@@ -113,12 +139,41 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             }
         });
     }
+    private void showArtwork(Holder holder, Bitmap bitmap) {
+        boolean banner = bitmap.getWidth() > bitmap.getHeight();
+        holder.banner.setImageBitmap(banner ? bitmap : null);
+        holder.banner.setVisibility(banner ? View.VISIBLE : View.GONE);
+        holder.icon.setImageBitmap(banner ? null : bitmap);
+        holder.icon.setVisibility(banner ? View.GONE : View.VISIBLE);
+        holder.label.setVisibility(banner ? View.GONE : View.VISIBLE);
+    }
+    String labelAt(int position) { return position >= 0 && position < items.size() ? items.get(position).label : ""; }
+    int ambientColorAt(int position) {
+        Bitmap bitmap = icons.get(keyAt(position) == null ? "" : keyAt(position));
+        if (bitmap == null) return 0xFF444444;
+        float[] hsv = new float[3];
+        int best = 0xFF444444;
+        float score = -1f;
+        for (int y = 0; y < bitmap.getHeight(); y += 8) {
+            for (int x = 0; x < bitmap.getWidth(); x += 8) {
+                int pixel = bitmap.getPixel(x, y);
+                if (Color.alpha(pixel) < 128) continue;
+                Color.colorToHSV(pixel, hsv);
+                float candidate = hsv[1] * hsv[2];
+                if (candidate > score) { score = candidate; best = pixel; }
+            }
+        }
+        return best;
+    }
     private void cancel(Holder holder) {
         holder.key = null;
         if (holder.task != null) { holder.task.cancel(true); holder.task = null; worker.purge(); }
     }
     @Override public void onViewRecycled(@NonNull Holder holder) {
         cancel(holder);
+        holder.card.animate().cancel();
+        holder.name.animate().cancel();
+        holder.banner.setImageDrawable(null);
         holder.icon.setImageDrawable(null);
         holder.card.setOnClickListener(null);
         super.onViewRecycled(holder);
@@ -134,6 +189,8 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     final class Holder extends RecyclerView.ViewHolder {
         final View card;
         final ImageView icon;
+        final ImageView banner;
+        final TextView label;
         final TextView name;
         String key;
         Future<?> task;
@@ -142,7 +199,21 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             card = view.findViewById(R.id.card);
             icon = view.findViewById(R.id.icon);
             name = view.findViewById(R.id.name);
+            banner = view.findViewById(R.id.banner);
+            label = view.findViewById(R.id.label);
+            float density = view.getResources().getDisplayMetrics().density;
+            card.setOutlineProvider(new ViewOutlineProvider() {
+                @Override public void getOutline(View v, Outline outline) {
+                    outline.setRoundRect(0, 0, v.getWidth(), v.getHeight(), 16 * density);
+                }
+            });
+            card.setClipToOutline(true);
             card.setOnFocusChangeListener((v, focused) -> {
+                v.animate().scaleX(focused ? FOCUS_SCALE : 1f).scaleY(focused ? FOCUS_SCALE : 1f)
+                        .setDuration(focused ? 260 : 180)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(focused ? 1.6f : 0f)).start();
+                name.animate().alpha(focused ? 1f : 0f).translationY((focused ? 4 : -6) * density)
+                        .setDuration(220).start();
                 int pos = getBindingAdapterPosition();
                 if (focused && pos != RecyclerView.NO_POSITION) listener.onTileFocused(pos, v);
             });
