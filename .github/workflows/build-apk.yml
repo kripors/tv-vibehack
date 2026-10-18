@@ -1,0 +1,50 @@
+name: Build TV Home Lite APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: APK debug (Ubuntu x86-64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: launcher
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 17 e cache do Gradle
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            launcher/**/*.gradle
+            launcher/gradle.properties
+            launcher/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Configurar Android SDK 34
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+
+      - name: Compilar APK debug com Gradle Wrapper 8.9
+        run: bash ./gradlew --no-daemon --stacktrace assembleDebug
+
+      # Actions com "uses" resolvem caminhos a partir da raiz do checkout,
+      # independentemente de defaults.run.working-directory.
+      - name: Disponibilizar APK para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv-home-lite-debug
+          path: launcher/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
